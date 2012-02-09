@@ -10,7 +10,6 @@ use HTML::Entities;
 require FileHandle;
 require 'parse.pl';
 
-my $webgiskey = '1d80962e345f4a52926a8a1e11fd066c';
 
 open(CLUBS, "/home/kay2/clubs.txt");
 while(<CLUBS>)
