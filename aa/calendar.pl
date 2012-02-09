@@ -1,7 +1,51 @@
 #!/usr/bin/perl
 
+unshift @INC, "../perl-lib";
 
+require URI::URL;
+use Date::Parse;
+require OSSP::uuid;
+use DBI;
+use HTML::Entities;
+require FileHandle;
 require 'parse.pl';
+
+my $webgiskey = '1d80962e345f4a52926a8a1e11fd066c';
+
+open(CLUBS, "/home/kay2/clubs.txt");
+while(<CLUBS>)
+{
+    print;
+    chomp;
+    $clubs{$_}++;
+}
+
+open(GISFIELDS, "fields.txt");
+while(<GISFIELDS>)
+{
+    chomp;
+    push @gisf, $_;
+}
+
+
+
+$::OutputDir = "/tmp";
+$::TextOutputFilename = 'meetings.txt';
+$::TextOutputFileFullPath = $::OutputDir . '/' . $::TextOutputFilename;
+
+$::UUID = new OSSP::uuid();
+$::UUID->make("v1");
+$::RunUUID = $::UUID->export("str");
+
+$::TextOutputFileHandle = new FileHandle '>' . $::TextOutputFileFullPath;
+unless($::TextOutputFileHandle)
+{
+    print STDERR "Unable to create text output file $::TextOutputFileFullPath: $!\n";
+    return;
+}
+
+my $dbh = DBI->connect("dbi:Pg:dbname=staging");
+
 
 #my($long, $lat) = (47.620499, -122.350876)
 #open(Z, "Gaz_zcta_national.txt");
@@ -22,17 +66,20 @@ for(my $i = 0; $i < $#flags; $i++)
     $flags{$flags[$i]} = 2 ** $i;
 }
 
-print join("\t", qw(id day area time open name location flags address)), "\n";
+$::TextOutputFileHandle->print(join("\t", qw(id day area time open name location flags address)), "\n");
 
 my($mi) = 1;
 my(@days) = qw(sunday monday tuesday wednesday thursday friday saturday);
 my $webprefix = "http://seattleaa.org/directory/web";
 my $ua = new LWP::UserAgent();
-$sth = $dbh->prepare('INSERT INTO seattleaadirectory (im
+
+my $sth = $dbh->prepare('INSERT INTO seattleaadirectory (importrunuuid, importhost, sourceurl, rownum, divisions, time, openclosed, name, address, notedisp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 
 foreach my $day (@days)
 {
-    my $req = new HTTP::Request(GET => $webprefix . $day . '.html');
+    my $url = $webprefix . $day . '.html';
+
+    my $req = new HTTP::Request(GET => $url);
     my $response = $ua->request($req);
     my $html = $response->content();
     my(@html) = split(/\r\n/, $html);
@@ -42,6 +89,12 @@ foreach my $day (@days)
     while(my $line = shift @html)
     {
 	$l++;
+	if($line =~ /^last\s+updated\s+((\S+)\s+(\d{1,2})\s*,\s*(\d{4}))/i)
+{
+    my $time = str2time($1);
+    print STDERR $time, "\n";
+}
+
 	if($line eq '<TR>')
 	{
 	    @row = ();
@@ -50,11 +103,15 @@ foreach my $day (@days)
 	{
 	    my $data = $1;
 	    $data =~ s!<br>!!gi;
+	    decode_entities($data);
 	    push @row, $data;
 	} elsif($line eq '</TR>')
 	{
 	    # end of row
 	    next if scalar(@row) == 0;
+
+	    $sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $mi, @row);
+
 	    push @rows, [@row];
 	    $area{$row[0]}++;
 	    my $time = $row[1];
@@ -92,7 +149,11 @@ if(0) {
 		}
 		else
 		{
-		  $address = join(" ", grep(defined $_, @{$r})) unless $address;
+		  $address = join(" ", grep(defined $_, @{$r})) unless $address
+		      ;
+
+
+;
 #		    print "$i: $add\n";
 #		    print "address: ", join("|", grep(defined $_, @{$r})), "\n";
 		}
@@ -104,8 +165,26 @@ if(0) {
 #	  }
 #	    print $address, "\n";
 }
+	    if($clubs{$row[4]})
+{
+}
+else
+{
 	    my($address) = &parseaddress($row[4]);
-	    print $mi,"\t", $day, "\t", join("\t", @row, join(" ", grep($_, @{$address}))), "\n";
+	    my($unparsed) = join(" ", @{$address});
+		my $gisurl = new URI::URL 'https://webgis.usc.edu/Services/Geocode/WebService/GeocoderWebServiceHttpNonParsed_V02_96.aspx';
+	    $gisurl->query_form('apiKey' => $webgiskey, version => 2.96, streetAddress => join(" ", grep($_, @{$address})), city => 'Seattle', state => 'WA', format => 'tsv');
+		  my $req = new HTTP::Request 'GET' => $gisurl;
+	    my $content = $ua->request($req)->content();
+	    my(@gisd) = split(/\t/, $content);
+	    my(%gisd);
+	    @gisd{@gisf} = @gisd;
+	    die $row[4] || $unparsed unless $gisd{'Matching Geography Type'} eq 'StreetSegment';
+	    print "\t", $gisd{Latitude}, "\t", $gisd{Longitude}, "\n";
+}
+
+
+	    $::TextOutputFileHandle->print($mi,"\t", $day, "\t", join("\t", @row, join(" ", grep($_, @{$address}))), "\n");
 	    $mi++;
 	}
     }
