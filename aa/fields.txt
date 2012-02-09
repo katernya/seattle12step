@@ -1,0 +1,123 @@
+Transaction Id
+API Version
+Query Status Code
+Latitude
+Longitude
+Match Score
+Match Type
+Matching Geography Type
+Interpolation Type
+Interpolation Sub-Type
+Matched Location Type
+Feature Matching Result Type
+FeatureMatchingResultCount
+FeatureMatchingResultTypeNotes
+TieHandlingStrategyType
+FeatureMatchingResultTypeTieBreakingNotes
+FeatureMatchingSelectionMethod
+FeatureMatchingSelectionMethodNotes
+Time Taken
+Census Year
+Census Block
+Census Block
+Census Block Group
+Census Tract
+Census County Fips
+Census CBSA Fips
+Census CBSA Micro
+Census MCD Fips
+Census MetDiv Fips
+Census MSA Fips
+Census Place Fips
+Census State Fips
+MNumber
+MNumberFractional
+MPreDirectional
+MPreQualifier
+MPreType
+MPreArticle
+MName
+MPostArticle
+MPostQualifier
+MSuffix
+MPostDirectional
+MSuiteType
+MSuiteNumber
+MPostOfficeBoxType
+MPostOfficeBoxNumber
+MCity
+MConsolidatedCity
+MMinorCivilDivision
+MCountySubRegion
+MCounty
+MState
+MZip
+MZipPlus1
+MZipPlus2
+MZipPlus3
+MZipPlus4
+MZipPlus5
+PNumber
+PNumberFractional
+PPreDirectional
+PPreQualifier
+PPreType
+PPreArticle
+PName
+PPostArticle
+PPostQualifier
+PSuffix
+PPostDirectional
+PSuiteType
+PSuiteNumber
+PPostOfficeBoxType
+PPostOfficeBoxNumber
+PCity
+PConsolidatedCity
+PMinorCivilDivision
+PCountySubRegion
+PCounty
+PState
+PZip
+PZipPlus1
+PZipPlus2
+PZipPlus3
+PZipPlus4
+PZipPlus5
+FNumber
+FNumberFractional
+FPreDirectional
+FPreQualifier
+FPreType
+FPreArticle
+FName
+FPostArticle
+FPostQualifier
+FSuffix
+FPostDirectional
+FSuiteType
+FSuiteNumber
+FPostOfficeBoxType
+FPostOfficeBoxNumber
+FCity
+FConsolidatedCity
+FMinorCivilDivision
+FCountySubRegion
+FCounty
+FState
+FZip
+FZipPlus1
+FZipPlus2
+FZipPlus3
+FZipPlus4
+FZipPlus5
+FArea
+FAreaType
+FGeometrySRID
+FGeometry
+FSource
+FVintage
+FPrimaryIdField
+FPrimaryIdValue
+FSecondaryIdField
+FSecondaryIdValue

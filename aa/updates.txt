@@ -1,0 +1,4 @@
+id	name	locationname	fullmailingaddress	address	city	zip
+563	SOBER AT THE SUMMIT	Family Pancake House Restaurant	601 Washington 906, Snoqualmie Pass, WA 98068	601 Washington 906	Snoqualmie Pass	98068
+529					Federal Way    
+1294					Enumclaw       
