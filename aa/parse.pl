@@ -25,6 +25,14 @@ require RecoveryAlphabet::Geo::Places;
 #, 'Snoqualmie Pass'
 );
 
+sub fixup {
+    my $l = shift;
+    my $rgxp = join("|",keys %::cities);
+    $l =~ s/($rgxp)/$::cities{$1}/ge;
+    return $l;
+}
+
+ 
 sub parseaddress {
     my $add = shift @_;
     $add =~ s!\(.*\)!!s;

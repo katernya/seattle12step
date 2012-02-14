@@ -1,25 +1,24 @@
-# -*- cperl -*-
-package RecoveryAlphabet::Geo::Places;
+package RecoveryAlphabet::Geo::Zips;
 
-use strict;
-require RecoveryAlphabet::Geo::Place;
-require RecoveryAlphabet::Geo::Points;
-use Math::Trig;
+require RecoveryAlphabet::Geo::Zip;
 use RecoveryAlphabet::Geo::Config qw($GeoFilePath);
 
+use Math::Trig;
+
 require FileHandle;
+
 
 sub new {
   my $class = shift;
   my $self = {};
   $self = bless $self, $class;
-  $self->load_places();
+  $self->load_zips();
   $self;
 }
 
-sub load_places {
+sub load_zips {
   my $self = shift;
-  my $fh = new FileHandle $::GeoFilePath . '/' . 'Gaz_places_53.txt';
+  my $fh = new FileHandle $::GeoFilePath . '/' . 'Gaz_zcta_national.txt';
   die $! unless $fh;
 
   my $headerline = $fh->getline();
@@ -28,53 +27,31 @@ sub load_places {
 
   grep($self->{_headerIndex}->{$headerfields[$_]} = $_, 0..$#headerfields);
 
-  $self->{_places} = [];
-  $self->{_placesByUntypedName} = {};
+  $self->{_zips} = [];
+  $self->{_zipsByCode} = {};
 
   while(my $line = $fh->getline())
     {
       chomp($line);
       my(@row) = split(/\t/, $line);
-      my $name = $row[$self->{_headerIndex}->{NAME}];
-      my(%place);
-@place{@headerfields} = @row;
-      my $place = new RecoveryAlphabet::Geo::Place(%place);
-      push @{$self->{_places}}, $place;
-      # remove terminating place type
-      $name =~ s/\s+\w+$//;
-      $self->{_placesByName}->{$name} = $place;
+      my $code = $row[$self->{_headerIndex}->{GEOID}];
+      my(%zip);
+      @zip{@headerfields} = @row;
+      my $zip = new RecoveryAlphabet::Geo::Zip(%zip);
+      push @{$self->{_zips}}, $zip;
+      $self->{_zipsByCode}->{$code} = $zip;
     }
   $fh->close();
 }
-
-sub getPlaceByName
-  {
-    my $self = shift;
-    my $name = shift;
-    $self->{_placesByName}{$name};
-  }
-      
 
 sub within_radius_of
     {
       my $self = shift;
       my $radius = shift;
-      my $place = $self->get_place(shift);
-      die unless ref $place;
-      grep($self->distance_between($place, $_) < $radius, @{$self->{_places}});
+      my $point = shift;
+      grep($self->distance_between($point, $_) < $radius, @{$self->{_zips}});
     }
 
-sub get_place
-      {
-	my $self = shift;
-	my $placeId = shift;
-	my $place;
-	$place = $self->{_placesByName}{$placeId};
-	if($place)
-	  {
-	    return $place;
-	  }
-      }
 
 sub distance_between
 {

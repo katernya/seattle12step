@@ -1,4 +1,6 @@
-package RecoveryAlphabet::Geo::Place;
+package RecoveryAlphabet::Geo::Zip;
+
+require RecoveryAlphabet::Geo::Point;
 
 use strict;
 use vars qw(@ISA);
@@ -11,7 +13,7 @@ sub new {
     bless $self, $class;
 }
 
-sub latitude { shift->{INTPTLAT}; }
+sub latitude { shift->{INTPTLAT} }
 sub longitude { shift->{INTPTLONG} }
  
 1;
