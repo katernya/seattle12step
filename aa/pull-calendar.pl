@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/local/ActivePerl-5.14/bin/perl
 
 unshift @INC, "../perl-lib";
 
@@ -67,8 +67,7 @@ unless($::TextOutputFileHandle)
     return;
 }
 
-my $dbh = DBI->connect("dbi:Pg:dbname=staging");
-
+my $dbh = DBI->connect("dbi:Pg:dbname=staging", "kay", "lizard");
 
 #my($long, $lat) = (47.620499, -122.350876)
 #open(Z, "Gaz_zcta_national.txt");
@@ -102,6 +101,10 @@ foreach my $day (@days)
 {
     my $url = $webprefix . $day . '.html';
 
+    ## html cache
+    ## need logic to handle update files on server
+    ## right now the cache files must be deleted
+
     my $html;
     if(open(DAY, "../cache/$day.html"))
       {
@@ -116,17 +119,21 @@ foreach my $day (@days)
 	print DAY $html;
 	close(DAY);
       }
-    
+
+    ## done html cache
+
     my(@html) = split(/\r\n/, $html);
     my(@rows);
     my(@row);
     my $l;
+    ## we need some error handling to detect if our screen-scraping algorithm is out of date
     while(my $line = shift @html)
     {
 	$l++;
 	if($line =~ /^last\s+updated\s+((\S+)\s+(\d{1,2})\s*,\s*(\d{4}))/i)
 	  {
 	    my $time = str2time($1);
+	    ## need to do something useful with this value
 	    print STDERR $time, "\n";
 	  }
 	
@@ -137,33 +144,66 @@ foreach my $day (@days)
 	  }
 	elsif($line =~ m!^<TD>(.*)</TD>!)
 	  {
+	    ## this logic works because the data columns are simply the TD element content, excluding BR elements
 	    my $data = $1;
+
+	    ## remove line break so it doesn't end up in our data
 	    $data =~ s!<br>!!gi;
+
 	    decode_entities($data);
+
 	    push @row, $data;
 	  }
 	elsif($line eq '</TR>')
 	  {
 	    # end of row
+
+	    ## skip header rows (table rows without any data cells, i.e. all TH elements)
 	    next if scalar(@row) == 0;
-	    
-	    $sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $mi, @row);
-	    
+
+	    ## populate our @rows array with a newly created array reference
+	    ## the reference of @row itself is not taken as we re-use that array for each row
 	    push @rows, [@row];
+
+	    ## execute our prepared query with our data argumenta
+	    $sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $mi, @row);
+
+	    ## what follows is our custom parsing code
+
+	    ## @meeting and %meeting are variables for use in outputting JSON for testing and development purposes
+	    my(@meeting);
+	    my(%meeting);
+
+	    ## Populate some %meeting key/value pairs
+	    $meeting{OriginalRow} = [@row];
+
+	    $meeting{Division} = $row[0];
+	    $meeting{Time} = $row[1];
+	    $meeting{OpenClosed} = $row[2];
+	    $meeting{Name} = $row[3];
+	    $meeting{NoteDisp} = $row[4];
+
 	    $area{$row[0]}++;
 	    my $time = $row[1];
 	    if($time =~ /^\s*midnight\s*$/i)
 	      {
 		$time = "11:59 PM";
 	      }
+	    if($time =~ /^\s*noon\s*$/i)
+	      {
+		$time = "12:00 PM";
+	      }
 	    my($hour, $min, $ampm);
 	    ($hour, $min, $ampm) = $time =~ m!^\s*(\d{1,2}):(\d{2})\s+(AM|PM)\s*$!;
-	    if($ampm eq 'PM')
+	    if($ampm eq 'PM' && $hour != 12)
 	      {
 		$hour += 12;
 	      }
 	    $time = sprintf("%02d%02d", $hour, $min);
 	    $row[1] = $time;
+
+	    $meeting{ParsedTime} = $time;
+
 	    my(@flags) = split(' ', $row[5]);
 	    my $flagval = 0;
 	    foreach my $flag (@flags)
@@ -179,6 +219,7 @@ foreach my $day (@days)
 	    else
 	      {
 		my(%locationAttrs);
+
 		my $location = $row[4];
 		$locationAttrs{OrigLocationValue} = $location;
 		my $fixedUpLocation = &fixup($location);
@@ -264,7 +305,7 @@ foreach my $day (@days)
 		#  $::Count++;
 		#  exit if $::Count == 2;
 		
-		if(1 || !$geocache{$row[4]})
+		if($::ForceGeocoding || !$geocache{$row[4]})
 		  {
 		    my $address = $locationAttrs{Remainder} . ", " . $locationAttrs{RelevantPlaceName} . ", WA " . $locationAttrs{RelevantZipCode};
 		    print "geocoding $address\n";
@@ -274,9 +315,22 @@ foreach my $day (@days)
 		    my $response = $ua->request($req);
 		    $geocache{$row[4]} = $response->content();
 		  }
-		$json = decode_json($geocache{$row[4]});
-		print $::JSON->pretty->encode($json->{results}[0]{geometry}{location}), "\n";
-		my $geoloc = $json->{results}[0]{geometry}{location};
+		my $geocodeResponse = decode_json($geocache{$row[4]});
+
+		my($geocoderesult) = {};
+		if($geocodeResponse->{status} eq 'OK')
+		  {
+		    my $nresults = scalar(@{$geocodeResponse->{results}}) ;
+		    if($nresults > 1)
+		      {
+			print STDERR "Ambiguous geocode result ($nresults)";
+#			next;
+		      }
+
+		    $geocoderesult = $geocodeResponse->{results}[0];
+		  }
+		
+		my $geoloc = $geocoderesult->{geometry}{location};
 		my($geolat, $geolong, $radius);
 		if(ref $geoloc)
 		  {
@@ -299,7 +353,6 @@ foreach my $day (@days)
 		  {
 		    print $::JSON->pretty->encode(\%locationAttrs);
 		    
-		    
 		    my $locName = $locationAttrs{LocationName};
 		    $locName =~ s/Ch\b/Church/;
 		    
@@ -311,85 +364,94 @@ foreach my $day (@days)
 		    my $req = new HTTP::Request('GET' => $url);
 		    print $req->as_string;
 		    my $response = $ua->request($req);
-		    die;
+#		    die;
 		    $placejson = $placecache{$row[4]} = $response->content();
 		  }
 		
-		$json = decode_json($placejson);
-		print $json->{status}, "\n";
-		if(scalar(@{$json->{restults}}) > 1)
+		my $placeresponse = decode_json($placejson);
+		my $placeresult = {};
+		if($placeresponse->{status} eq 'OK') 
 		  {
-		    die "multiple results";
+		    if(scalar(@{$placeresponse->{results}}) > 1)
+		      {
+			print STDERR "ambiguous place result\n";
+			#die;
+		      }
+		    $placeresult = $placeresponse->{results}[0];
 		  }
-		#  print $json->{results}[0]{name},"\n";
+
+		my(%resultAttrs);
+		$resultAttrs{PlaceName} = $placeresult->{name};
+		$resultAttrs{PlaceLatitude} = $placeresult->{geometry}{location}{lat};
+		$resultAttrs{PlaceLongitude} = $placeresult->{geometry}{location}{lng};
+		$resultAttrs{FormattedAddress} = $geocoderesult->{formatted_address};
+
+		push @meeting, encode_json(\%meeting);
+		push @meeting, \%resultAttrs;
+		push @meeting, \%locationAttrs;
+		push @::Meetings, [ \%meeting, \%resultAttrs ];
+#		push @meeting, $geocoderesult;
+#		push @meeting, $placeresult;
 		
 		
-		print $placejson, "\n";
-		exit;
-		
-		
-		if(0 || !$geocache{$row[4]})
-		  {
+#		my(%c);#a
+#		foreach $component (@{$geocoderesult{address_components}})
+#		  {
 		    
+
+
+#		print '[', join("\n", map(ref $_ ? $::JSON->pretty->encode($_) : $_, @meeting)), "\n", '],', "\n";
+		
+		
 		    
-		    my $url = new URI::URL "http://maps.googleapis.com/maps/api/geocode/json";
-		    $url->query_form('address' => $location, 'sensor' => false, 'region' => 'us');
-		    my $req = new HTTP::Request('GET' => $url);
-		    my $response = $ua->request($req);
-		    $geocache{$row[4]} = $response->content();
-		  }
-		$json = decode_json($geocache{$row[4]});
-		print $geocache{$row[4]}, "\n";
-		print scalar(@{$json->{results}}), "\n";
-		print $row[4], "\n  ", $json->{results}[0]{formatted_address}, "\n\n";
-		
-		next;
-		
-		
-		my $content = $geocache{$row[4]};
-		
-		#  unmy($address) = &parseaddress($loc);
-		#	    my($unparsed) = join(" ", @{$address});
-		my $unparsed = $address;
-		my(@gisd);
-		my(%gisd);
-		if($content)
+		if(0)
 		  {
-		    @gisd = split(/\t/, $content);
-		    (@gisd) = split(/\t/, $content);
-		    (%gisd);
-		    @gisd{@gisf} = @gisd;
-		  }
-		unless($gisd{'Matching Geography Type'} eq 'StreetSegment')
-		  {
-		    print "unparsed = $unparsed\n";
-		    my $gisurl = new URI::URL 'https://webgis.usc.edu/Services/Geocode/WebService/GeocoderWebServiceHttpNonParsed_V02_96.aspx';
-		    $gisurl->query_form('apiKey' => $webgiskey, version => 2.96, streetAddress => $unparsed, city => ($placeName || 'Seattle'), state => 'WA', format => 'tsv', );
-		    my $req = new HTTP::Request 'GET' => $gisurl;
-		    my $content = $ua->request($req)->content();
+		    # this is for the webgis service
+		    my $content = $geocache{$row[4]};
 		    
-		    (@gisd) = split(/\t/, $content);
-		    (%gisd);
-		    @gisd{@gisf} = @gisd;
-		    print map($_ . " = " . $gisd{$_} . "\n", @gisf);
-		    die $row[4] || $unparsed unless $gisd{'Matching Geography Type'} eq 'StreetSegment';
-		    $geocache{$row[4]} = $content;
+		    #  unmy($address) = &parseaddress($loc);
+		    #	    my($unparsed) = join(" ", @{$address});
+		    my $unparsed = $address;
+		    my(@gisd);
+		    my(%gisd);
+		    if($content)
+		      {
+			@gisd = split(/\t/, $content);
+			(@gisd) = split(/\t/, $content);
+			(%gisd);
+			@gisd{@gisf} = @gisd;
+		      }
+		    unless($gisd{'Matching Geography Type'} eq 'StreetSegment')
+		      {
+			print "unparsed = $unparsed\n";
+			my $gisurl = new URI::URL 'https://webgis.usc.edu/Services/Geocode/WebService/GeocoderWebServiceHttpNonParsed_V02_96.aspx';
+			$gisurl->query_form('apiKey' => $webgiskey, version => 2.96, streetAddress => $unparsed, city => ($placeName || 'Seattle'), state => 'WA', format => 'tsv', );
+			my $req = new HTTP::Request 'GET' => $gisurl;
+			my $content = $ua->request($req)->content();
+			
+			(@gisd) = split(/\t/, $content);
+			(%gisd);
+			@gisd{@gisf} = @gisd;
+			print map($_ . " = " . $gisd{$_} . "\n", @gisf);
+			die $row[4] || $unparsed unless $gisd{'Matching Geography Type'} eq 'StreetSegment';
+			$geocache{$row[4]} = $content;
+		      }
+		    else
+		      {
+		      }
+		    
+		    print "\t", $gisd{Latitude}, "\t", $gisd{Longitude}, "\n";
 		  }
-		else
-		  {
-		  }
-		
-		print "\t", $gisd{Latitude}, "\t", $gisd{Longitude}, "\n";
 	      }
 	    
-	    
-	    $::TextOutputFileHandle->print($mi,"\t", $day, "\t", join("\t", @row, join(" ", grep($_, @{$address}))), "\n");
+	    $::TextOutputFileHandle->print($mi,"\t", $day, "\t", join("\t", @row), "\n");
 	    $mi++;
 	  }
       }
   }
 
-print $::JSON->pretty->encode(\@::Locations);
+print $::JSON->pretty->encode(\@::Meetings);
+#print $::JSON->pretty->encode(\@::Locations);
 
 #print join(", ", keys %area), "\n";
 #print join(", ", keys %flags), "\n";
