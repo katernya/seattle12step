@@ -3,6 +3,7 @@
 unshift @INC, "../perl-lib";
 
 use JSON;
+use strict;
 require URI::URL;
 use Date::Parse;
 require Data::UUID;
@@ -14,10 +15,12 @@ require RecoveryAlphabet::Geo::Places;
 require RecoveryAlphabet::Geo::Zips;
 use DB_File;
 
-my $geocache = tie(%geocache, DB_File, "geocache2.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
+my(%geocache);
+my $geocache = tie(%geocache, 'DB_File', "geocache2.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
 die unless $geocache;
 
-my $placecache = tie(%placecache, DB_File, "placecache.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
+my(%placecache);
+my $placecache = tie(%placecache, 'DB_File', "placecache.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
 die unless $placecache;
 
 
@@ -36,6 +39,9 @@ my $zipRgxp = join('|', map(scalar(reverse), @codes));
 my $webgiskey;
 open(WEBGISKEY, "webgiskey.txt");
 chomp($webgiskey = <WEBGISKEY>);
+
+## need some better logic here
+my(%clubs);
 open(CLUBS, "clubs.txt");
 while(<CLUBS>)
 {
@@ -43,6 +49,8 @@ while(<CLUBS>)
     $clubs{$_}++;
 }
 
+## isolate GIS functions
+my(@gisf);
 open(GISFIELDS, "fields.txt");
 while(<GISFIELDS>)
 {
@@ -83,6 +91,7 @@ require LWP::UserAgent;
 require HTTP::Request;
 
 my(@flags) = qw(an at cc gs mo oh si sp ss wb we wo wp yp);
+my(%flags);
 for(my $i = 0; $i < $#flags; $i++)
 {
     $flags{$flags[$i]} = 2 ** $i;
@@ -183,7 +192,6 @@ foreach my $day (@days)
 	    $meeting{Name} = $row[3];
 	    $meeting{NoteDisp} = $row[4];
 
-	    $area{$row[0]}++;
 	    my $time = $row[1];
 	    if($time =~ /^\s*midnight\s*$/i)
 	      {
@@ -230,6 +238,7 @@ foreach my $day (@days)
 		my(@locationParts);
 		
 		my(@l);
+		my $zipcode;
 		if(($zipcode) = $rloc =~ /($zipRgxp)/)
 		  {
 		    $zipcode = reverse $zipcode;
@@ -243,7 +252,7 @@ foreach my $day (@days)
 		  }
 		else
 		  {
-		    splice(@l, scalar(@l), 0, $fixedUpAddress);
+		    splice(@l, scalar(@l), 0, $fixedUpLocation);
 		  }
 		
 		
@@ -310,7 +319,7 @@ foreach my $day (@days)
 		    my $address = $locationAttrs{Remainder} . ", " . $locationAttrs{RelevantPlaceName} . ", WA " . $locationAttrs{RelevantZipCode};
 		    print "geocoding $address\n";
 		    my $url = new URI::URL "http://maps.googleapis.com/maps/api/geocode/json";
-		    $url->query_form('address' => $address, 'sensor' => false, 'region' => 'us');
+		    $url->query_form('address' => $address, 'sensor' => 'false', 'region' => 'us');
 		    my $req = new HTTP::Request('GET' => $url);
 		    my $response = $ua->request($req);
 		    $geocache{$row[4]} = $response->content();
