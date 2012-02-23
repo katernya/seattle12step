@@ -1,18 +1,20 @@
 use JSON;
 use DB_File;
-my $geocache = tie(%geocache, DB_File, "geocache2.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
-die unless $geocache;
-while(($key, $val) = each %geocache)
+my $json = new JSON;
+my(@dbs) = @ARGV;
+unless(scalar(@dbs))
 {
-    $dump{geocache}{$key} = decode_json($val);
+    @dbs = qw(placecache geocache2);
 }
 
-
-my $placecache = tie(%placecache, DB_File, "placecache.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
-die unless $placecache;
-while(($key, $val) = each %placecache)
+foreach my $db (@ARGV)
 {
-    $dump{placecache}{$key} = decode_json($val);
+    my(%hash);
+    my $hasho = tie(%hash, DB_File, "$db.db", O_RDONLY);
+    die unless $hasho;
+    while(($key, $val) = each %hash)
+    {
+	$dump{$db}{$key} = decode_json($val);
+    }
 }
-my $json = JSON->new->allow_nonref;
 print $json->pretty->encode(\%dump);
