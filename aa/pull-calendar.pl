@@ -1,11 +1,11 @@
 #!/usr/local/ActivePerl-5.14/bin/perl
 
 unshift @INC, "../perl-lib";
-
 use JSON;
 use strict;
 require URI::URL;
 use Date::Parse;
+use Text::Capitalize;
 require Data::UUID;
 use DBI;
 use HTML::Entities;
@@ -17,8 +17,12 @@ require 'fields/address.pm';
 
 use DB_File;
 
+my $log_fh = IO::Handle->new();
+$log_fh->fdopen(fileno(STDERR), "w");
+
 $::DisablePlaceSearch = 1;
 $::ResultExpirationSeconds = 7 * 86400;
+$::ForceGeocoding = 1;
 
 @::ValidDivisions = ('NORTH', 'CENTRAL', 'EASTSIDE', 'WEST', 'SOUTH', 'SOUTH COUNTY');
 grep($::ValidDivisions{$_}++, @::ValidDivisions);
@@ -31,7 +35,6 @@ my(%placecache);
 my $placecache = tie(%placecache, 'DB_File', "placecache.db", O_CREAT|O_RDWR, 0640, $DB_HASH);
 die unless $placecache;
 
-my $Context = { geocache => \%geocache, placecache => \%placecache, DisablePlaceSearch => $::DisablePlaceSearch };
 
 my $places = new RecoveryAlphabet::Geo::Places();
 my $zips = new RecoveryAlphabet::Geo::Zips();
@@ -45,9 +48,9 @@ my(@zips) = $zips->within_radius_of(50, $places->getPlaceByName('Seattle'));
 my(@codes) = map($_->{GEOID}, @zips);
 my $zipRgxp = join('|', map(scalar(reverse), @codes));
 
-$Context->{placeRgxp} = $placeRgxp;
-$Context->{zipRgxp} = $zipRgxp;
-$Context->{places} = $places;
+my $Context = { geocache => \%geocache, placecache => \%placecache, DisablePlaceSearch => $::DisablePlaceSearch,
+		LogFileHandle => $log_fh, zips => $zips , placeRgxp => $placeRgxp, zipRgxp => $zipRgxp, places => $places,
+		ForceGeocoding => $::ForceGeocoding };
  
 my $webgiskey;
 open(WEBGISKEY, "webgiskey.txt");
@@ -74,7 +77,6 @@ while(<GISFIELDS>)
 
 
 $::JSON = JSON->new();
-print $::JSON, "\n";
 $::JSON = $::JSON->allow_nonref;
 
 $::OutputDir = "/tmp";
@@ -120,18 +122,26 @@ my(@days) = qw(sunday monday tuesday wednesday thursday friday saturday);
 my $webprefix = "http://seattleaa.org/directory/web";
 my $ua = new LWP::UserAgent();
 
-my $sth = $dbh->prepare('INSERT INTO seattleaadirectory (importrunuuid, importhost, sourceurl, rownum, divisions, time, openclosed, name, address, notedisp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+my $querysth = $dbh->prepare("select meetingserialid from meetingsource where dayofweek = ? and divisions = ? and time = ? and openclosed = ? and name = ? and address = ? and notedisp = ?");
+
+my $sth = $dbh->prepare('INSERT INTO meetingsource (importrunuuid, importhost, sourceurl, updateddate, dayofweek, rownum, divisions, time, openclosed, name, address, notedisp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 
 my(%input);
 foreach my $day (@days)
   {
     my $url = $webprefix . $day . '.html';
     
+    my $updateddate;
+
     ## html cache
     ## need logic to handle update files on server
     ## right now the cache files must be deleted
 
     my $html;
+#    my $headreq = new HTTP::Request(HEAD => $url);
+#    my $headresp = $ua->request($headreq);
+#    print $headresp->as_string();
+
     if (open(DAY, "../cache/$day.html")) {
       $html = join('', <DAY>);
     } else {
@@ -155,6 +165,7 @@ foreach my $day (@days)
       if ($line =~ /^last\s+updated\s+((\S+)\s+(\d{1,2})\s*,\s*(\d{4}))/i) {
 	my $time = str2time($1);
 	## need to do something useful with this value
+	$updateddate = scalar(localtime($time));
 	print STDERR $time, "\n";
       }
 	
@@ -179,16 +190,25 @@ foreach my $day (@days)
 
 	## populate our @rows array with a newly created array reference
 	## the reference of @row itself is not taken as we re-use that array for each row
+
+	$row[3] = capitalize_title($row[3]);
+
 	push @rows, [@row];
 
+	$querysth->execute($day, $row[0], $row[1], $row[2], $row[3], $row[4], $row[5]);
+	my($id) = $querysth->fetchrow_array();
+#	print $id, "\n";
+
 	## execute our prepared query with our data argumenta
-	$sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $mi, @row);
+	$sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $updateddate, $day, $mi, @row) unless $id;
 
 	## what follows is our custom parsing code
 
 	## @meeting and %meeting are variables for use in outputting JSON for testing and development purposes
 	my(@meeting);
 	my(%meeting);
+
+
 
 	## Populate some %meeting key/value pairs
 	#	    $meeting{OriginalRow} = [@row];
@@ -198,7 +218,8 @@ foreach my $day (@days)
 	$meeting{Time} = $row[1];
 	$meeting{OpenClosed} = $row[2];
 	$meeting{Name} = $row[3];
-	$meeting{NoteDisp} = $row[4];
+	$meeting{Address} = $row[4];
+	$meeting{NoteDisp} = $row[5];
 
 	unless ($::ValidDivisions{$row[0]}) {
 	  die "Unknown division $row[0] (known divisions " . join(" ", keys %::ValidDivisions) . ")";

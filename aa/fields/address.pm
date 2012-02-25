@@ -60,6 +60,9 @@ sub process_input {
   my $geocache = $self->{_context}{geocache};
   my $placecache = $self->{_context}{placecache};
   my $places = $self->{_context}{places};
+  my $zips = $self->{_context}{zips};
+  my $log_fh = $self->{_context}{LogFileHandle};
+  my $forceGeocoding = $self->{_context}{ForceGeocoding};
 
   ## parse address
   if($Clubs{$address})
@@ -71,8 +74,14 @@ sub process_input {
       
       my $location = $address;
       $locationAttrs{OrigLocationValue} = $location;
+
+      $log_fh->print("\n********************************\nOriginal Location Value:\t$location\n\n");
+
       my $fixedUpLocation = $self->fixup($location);
       $locationAttrs{PostSubstValue} = $fixedUpLocation;
+
+      $log_fh->print("Post Substitution Value\n\t$fixedUpLocation\n\n");
+
       my($placeName);
       my $rloc = reverse $fixedUpLocation;
       
@@ -87,23 +96,26 @@ sub process_input {
 	  my $postZip = reverse $`;
 	  
 	  splice(@l, scalar(@l), 0, $preZip, $postZip);
-	  
+
+	  my $zip = $zips->getZipByCode($zipcode);
 	  $locationAttrs{RelevantZipCode} = $zipcode;
-	  print STDERR "found relevant zip code: $zipcode\n";
+	  $log_fh->print("Relevant Zip Code:\n\t$zipcode\n\n");
 	}
       else
 	{
 	  splice(@l, scalar(@l), 0, $fixedUpLocation);
 	}
-		
+
+      @l = grep(/[\S^,]/, @l);
+
+      $log_fh->print("Current location array:\n\t", map("[$_] $l[$_]; ", 0..$#l), "\n\n");
 		
       my(@l2);
       while (defined(my $part = pop @l)) {
 	my $rpart = reverse $part;
 		    
-	print STDERR "checking $rpart\n";
 	if (($placeName) = $rpart =~ /($placeRgxp)/) {
-	  print STDERR "found relevant location " . (reverse $placeName) . "\n";
+	  $log_fh->print("Relevant Plce Name\n\t" . (reverse $placeName) . "\n\n");
 	  my $preLoc = reverse $';
 	  my $postLoc = reverse $`;
 	  $preLoc =~ s/\s*,\s*$//;
@@ -122,8 +134,26 @@ sub process_input {
 	}
       }
       splice(@l2, 0, 0, @l);
-		
-      my(@l3) = grep(/[\S^,]/, @l2);
+
+      my(@l3);
+      while (defined(my $part = shift @l2))
+	{
+	  next unless $part =~ /[\S^,]/;
+	  if($part =~ /\([^\)]*\)/)
+	    {
+	      push @l3, $`;
+	      push @l3, $&;
+	      push @l3, $';
+	    }
+	  else
+	    {
+	      push @l3, $part;
+	    }
+	}
+	
+#      my(@l3) = grep(s/,\s*$// || 1, grep(/[\S^,]/, @l2));
+
+      $log_fh->print("Location with zip/city removed: ", join(";", @l3), "\n");
 		
       my $firstPart = shift @l3;
       my $locationName; 
@@ -133,8 +163,13 @@ sub process_input {
       } else {
 	$rest = $firstPart;
       }
+
+      $log_fh->print("Determined Location Name:\n\t$locationName\n\n");
+
       $locationAttrs{LocationName} = $locationName;
       $locationAttrs{Remainder} = $rest;
+
+      $log_fh->print("Remainder of address field value:\n\t$rest\n\n");
 		
       $locationAttrs{LocationParts} = \@l3;
       # this just removes a discovered location from the string
@@ -149,10 +184,12 @@ sub process_input {
 
       my $geocodeContent;
       my $geocodeResponse;
-      if ($::ForceGeocoding || !exists $geocache->{$address}) {
+      if ($forceGeocoding || !exists $geocache->{$address}) {
 	my $inputAddress = $locationAttrs{Remainder} . ", " .
 	  $locationAttrs{RelevantPlaceName} . ", WA " . $locationAttrs{RelevantZipCode};
-	print STDERR "geocoding $inputAddress\n";
+
+	$log_fh->print("performing geocoding on:\n\t$inputAddress\n");
+
 	my $geocodeurl = new URI::URL "http://maps.googleapis.com/maps/api/geocode/json";
 	$geocodeurl->query_form('address' => $inputAddress, 'sensor' => 'false', 'region' => 'us');
 	my $req = new HTTP::Request('GET' => $geocodeurl);
@@ -173,7 +210,7 @@ sub process_input {
       if ($geocodeResponse->{status} eq 'OK') {
 	my $nresults = scalar(@{$geocodeResponse->{results}}) ;
 	if ($nresults > 1) {
-	  print STDERR "Ambiguous geocode result ($nresults)";
+	  $log_fh->print("Ambiguous geocode result ($nresults)");
 	  #			next;
 	}
 
@@ -194,53 +231,77 @@ sub process_input {
 		
 		
       my $performPlaceLookup = 0;
-      print STDERR "checking place cache for $address\n";
+      $log_fh->print("checking place cache for $address\n");
       my $placecachejson = $placecache->{$address};
-
+      $log_fh->print($placecachejson);
 
       my $placeresponse;
       my $cachedPlaceResponse;
+      my $gotValidPlaceCacheHit;
       if (defined $placecachejson) {
+
 	my $placecachehash = decode_json($placecachejson);
 	$cachedPlaceResponse = $placecachehash->{Response};
-	if ($cachedPlaceResponse->{status} eq 'ZERO_RESULTS' && (time - $placecachehash->{RequestTime}) >= $::ResultExpirationSeconds) {
-	  $performPlaceLookup = 1;
-	} else {
-	  if ($cachedPlaceResponse->{status} ne 'OK') {
-	    $performPlaceLookup = 1;
+	if ($cachedPlaceResponse->{status} eq 'ZERO_RESULTS')
+	  {
+	    if((time - $placecachehash->{RequestTime}) >= $::ResultExpirationSeconds)
+	      {
+		$log_fh->print("zero results in place cache, time to re-search.");
+		$performPlaceLookup = 1;
+	      }
+	    else
+	      {
+		$log_fh->print("zero results in place cache, not time to re-search.");
+	      }
 	  } else {
-	    #			    if($placeresponse->{results}[0]{name} eq 'Wenatchee National Forest')
-	    #			      {
-	    #				$performPlaceLookup = 1;
-	    #			      }
+	    if ($cachedPlaceResponse->{status} ne 'OK') {
+	      $performPlaceLookup = 1;
+	    } else {
+	      my $nResults = @{$cachedPlaceResponse->{results}};
+	      #			    if($placeresponse->{results}[0]{name} eq 'Wenatchee National Forest')
+	      #			      {
+	      #				$performPlaceLookup = 1;
+	      #			      }
+	      if($nResults == 1)
+		{
+		  $gotValidPlaceCacheHit = 1;
+		}
+	      else
+		{
+		  $performPlaceLookup = 1;
+		}
+	    }
 	  }
-	}
       } else {
 	$performPlaceLookup = 1;
       }
 
+      if($gotValidPlaceCacheHit)
+	{
+	  $log_fh->print("Got valid place cache hit");
+	}
+
       if (!$self->{_context}->{DisablePlaceSearch} && $performPlaceLookup) {
 	die;
-	print STDERR $::JSON->pretty->encode(\%locationAttrs);
 		    
 	my $locName = $locationAttrs{LocationName};
 	$locName =~ s/Ch\b/Church/;
 		    
 	die unless $locName;
-	print STDERR "checking $locName\n";
+	$log_fh->print("checking $locName\n");
 		    
 	my $url = new URI::URL "https://maps.googleapis.com/maps/api/place/search/json"; 
 	my $inputLocation = $geolat .','. $geolong;
 	$url->query_form(key => 'AIzaSyDOx6l9jZFmyR1pE2ZU62PXe-fSWHrnop4',				
 			 'location' => $inputLocation, radius => $radius, sensor => 'false', name => $locName);
 	my $req = new HTTP::Request('GET' => $url);
-	print STDERR $req->as_string;
+	$log_fh->print($req->as_string);
 	my $response = $::UserAgent->request($req);
 	#		    die;
 	my $placejson = $response->content();
 	$placeresponse = decode_json($placejson);
-	print STDERR $placejson, "\n";
-	print STDERR $placeresponse->{status}, "\n";
+	$log_fh->print($placejson, "\n");
+	$log_fh->print($placeresponse->{status}, "\n");
 	my(%placeCacheHash) = ('Response' => $placeresponse, 'Input' => { 'location' => $inputLocation, radius => $radius, name => $locName }, RequestTime => time);
 	$placecache->{$address} = encode_json(\%placeCacheHash);
       } else {
@@ -250,7 +311,7 @@ sub process_input {
       my $placeresult = {};
       if ($placeresponse->{status} eq 'OK') {
 	if (scalar(@{$placeresponse->{results}}) > 1) {
-	  print STDERR "ambiguous place result\n";
+	  $log_fh->print("ambiguous place result\n");
 	  #die;
 	}
 	$placeresult = $placeresponse->{results}[0];
@@ -270,8 +331,8 @@ sub process_input {
 sub fixup {
   my $self = shift;
   my $l = shift;
-  my $rgxp = join("|",keys %::cities);
-  $l =~ s/($rgxp)/$::cities{$1}/ge;
+  my $rgxp = join("|",keys %Cities);
+  $l =~ s/($rgxp)/$Cities{$1}/ge;
   return $l;
 }
 
