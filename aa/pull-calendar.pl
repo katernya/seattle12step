@@ -22,7 +22,7 @@ $log_fh->fdopen(fileno(STDERR), "w");
 
 $::DisablePlaceSearch = 1;
 $::ResultExpirationSeconds = 7 * 86400;
-$::ForceGeocoding = 1;
+$::ForceGeocoding = 0;
 
 @::ValidDivisions = ('NORTH', 'CENTRAL', 'EASTSIDE', 'WEST', 'SOUTH', 'SOUTH COUNTY');
 grep($::ValidDivisions{$_}++, @::ValidDivisions);
@@ -220,6 +220,7 @@ foreach my $day (@days)
 	$meeting{Name} = $row[3];
 	$meeting{Address} = $row[4];
 	$meeting{NoteDisp} = $row[5];
+	$meeting{DayOfWeek} = $day;
 
 	unless ($::ValidDivisions{$row[0]}) {
 	  die "Unknown division $row[0] (known divisions " . join(" ", keys %::ValidDivisions) . ")";
@@ -295,7 +296,10 @@ foreach my $day (@days)
     }
   }
 
+print STDERR "here\n";
+print encode_json(\@::Meetings);
 
+exit;
 my(@fields);
 my(%fieldidx);
 foreach my $meeting (@::Meetings) {
