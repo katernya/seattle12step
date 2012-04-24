@@ -1,19 +1,42 @@
 #!/usr/local/ActivePerl-5.14/bin/perl
 
 unshift @INC, "../perl-lib";
-use JSON;
 use strict;
 require URI::URL;
-use Date::Parse;
-use Text::Capitalize;
+require LWP::UserAgent;
+require HTTP::Request;
 require Data::UUID;
-use DBI;
-use HTML::Entities;
+require Net::Riak;
 require FileHandle;
-require 'parse.pl';
 require RecoveryAlphabet::Geo::Places;
 require RecoveryAlphabet::Geo::Zips;
+require S12S;
+require 'parse.pl';
 require 'fields/address.pm';
+use JSON;
+use Text::Capitalize;
+use Date::Parse;
+use DBI;
+use HTML::Entities;
+
+use MongoDB;
+
+#my $mongoConn = MongoDB::Connection->new(host => 'localhost', port => 27017);
+
+my $client = Net::Riak->new(transport => 'PBC',
+host => '127.0.0.1',
+port => '8087');
+die unless $client;
+
+my $bucket = $client->bucket('meetings');
+
+#
+# mongodbi
+#
+my $s12sapp = S12S->new;
+die unless $s12sapp;
+my $meetings = $s12sapp->class('meeting');
+die unless $meetings;
 
 use DB_File;
 
@@ -51,7 +74,10 @@ my $zipRgxp = join('|', map(scalar(reverse), @codes));
 my $Context = { geocache => \%geocache, placecache => \%placecache, DisablePlaceSearch => $::DisablePlaceSearch,
 		LogFileHandle => $log_fh, zips => $zips , placeRgxp => $placeRgxp, zipRgxp => $zipRgxp, places => $places,
 		ForceGeocoding => $::ForceGeocoding };
- 
+
+##
+## webgis stuff
+## 
 my $webgiskey;
 open(WEBGISKEY, "webgiskey.txt");
 chomp($webgiskey = <WEBGISKEY>);
@@ -65,7 +91,9 @@ while(<CLUBS>)
     $clubs{$_}++;
 }
 
-## isolate GIS functions
+##  TODO - isolate GIS functions
+## webgis stuff
+##
 my(@gisf);
 open(GISFIELDS, "fields.txt");
 while(<GISFIELDS>)
@@ -74,8 +102,9 @@ while(<GISFIELDS>)
     push @gisf, $_;
 }
 
-
-
+##
+## Misc initialization
+##
 $::JSON = JSON->new();
 $::JSON = $::JSON->allow_nonref;
 
@@ -105,8 +134,6 @@ my $dbh = DBI->connect("dbi:Pg:dbname=staging", "kay", "lizard");
 #  }
 
 
-require LWP::UserAgent;
-require HTTP::Request;
 
 my(@flags) = qw(an at cc gs mo oh si sp ss wb we wo wp yp);
 my(%flags);
@@ -208,8 +235,6 @@ foreach my $day (@days)
 	my(@meeting);
 	my(%meeting);
 
-
-
 	## Populate some %meeting key/value pairs
 	#	    $meeting{OriginalRow} = [@row];
 
@@ -222,13 +247,27 @@ foreach my $day (@days)
 	$meeting{NoteDisp} = $row[5];
 	$meeting{DayOfWeek} = $day;
 
+	##
+	## mongodbi code
+	##
+	my $meetingdoc = $meetings->new(division => $row[0],
+					time => $row[1],
+					openclosed => $row[2],
+					meetingname => $row[3],
+					address => $row[4],
+					notedisp => $row[5],
+					dayofweek => $day);
+	$meetingdoc->insert;
+					
 	unless ($::ValidDivisions{$row[0]}) {
 	  die "Unknown division $row[0] (known divisions " . join(" ", keys %::ValidDivisions) . ")";
 	}
 
 	$::Division{$row[0]}++;
 
+	##
 	## parse time
+	##
 	my $time = $row[1];
 	if ($time =~ /^\s*midnight\s*$/i) {
 	  $time = "11:59 PM";
@@ -248,15 +287,19 @@ foreach my $day (@days)
 
 	$meeting{ParsedTime} = $time;
 
+	##
 	## parse flags
+	##
 	my(@flags) = split(' ', $row[5]);
 	my $flagval = 0;
 	foreach my $flag (@flags) {
 	  $flagval += $flags{$flag};
 	}
 	$row[5] = $flagval;
-	    
+
+	##
 	## Parse address field
+	##
 	my $addressField = new aa::fields::address ($Context, $row[4]);
 	$addressField->process_input();
 
