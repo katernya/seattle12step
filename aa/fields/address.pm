@@ -58,6 +58,7 @@ sub process_input {
   my $zipRgxp = $self->{_context}{zipRgxp};
   my $placeRgxp = $self->{_context}{placeRgxp};
   my $geocache = $self->{_context}{geocache};
+  my $mongoGeoCache = $self->{_context}{MongoGeoCache};
   my $placecache = $self->{_context}{placecache};
   my $places = $self->{_context}{places};
   my $zips = $self->{_context}{zips};

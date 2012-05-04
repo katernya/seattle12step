@@ -7,6 +7,12 @@ use Math::Trig;
 
 require FileHandle;
 
+sub getZipByCode {
+  my $self = shift;
+  my $code = shift;
+  $self->{_zipsByCode}{$code};
+}
+
 
 sub new {
   my $class = shift;

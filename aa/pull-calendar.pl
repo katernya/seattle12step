@@ -21,11 +21,23 @@ use HTML::Entities;
 
 use MongoDB;
 
-#my $mongoConn = MongoDB::Connection->new(host => 'localhost', port => 27017);
+my $mongoConn = MongoDB::Connection->new(host => 'localhost', port => 27017);
+my $mongoDb = $mongoConn->seattle12step;
+my $mongoGeoCache = $mongoDb->geocache;
 
-my $client = Net::Riak->new(transport => 'PBC',
-host => '127.0.0.1',
-port => '8087');
+my $client;
+if(1)
+  {
+    $client = Net::Riak->new(transport => 'PBC',
+				host => '127.0.0.1',
+				port => '8087');
+  }
+else
+  {
+    $client = Net::Riak->new(host => '127.0.0.1',
+				port => '8098');
+  }
+    
 die unless $client;
 
 my $bucket = $client->bucket('meetings');
@@ -71,7 +83,11 @@ my(@zips) = $zips->within_radius_of(50, $places->getPlaceByName('Seattle'));
 my(@codes) = map($_->{GEOID}, @zips);
 my $zipRgxp = join('|', map(scalar(reverse), @codes));
 
-my $Context = { geocache => \%geocache, placecache => \%placecache, DisablePlaceSearch => $::DisablePlaceSearch,
+##
+## This is currently used to pass variables into the field parsing object methods
+##
+my $Context = { MongoGeoCache => $mongoGeoCache,
+		geocache => \%geocache, placecache => \%placecache, DisablePlaceSearch => $::DisablePlaceSearch,
 		LogFileHandle => $log_fh, zips => $zips , placeRgxp => $placeRgxp, zipRgxp => $zipRgxp, places => $places,
 		ForceGeocoding => $::ForceGeocoding };
 
@@ -124,17 +140,9 @@ unless($::TextOutputFileHandle)
 
 my $dbh = DBI->connect("dbi:Pg:dbname=staging", "kay", "lizard");
 
-#my($long, $lat) = (47.620499, -122.350876)
-#open(Z, "Gaz_zcta_national.txt");
-#while(<Z>)
-#  {
-#    chomp($_);
-#    ($zip, $aland, $awater, $aland_sqmi, $awater, $sqmi, $intptlong, $intptlat)# = split(/\t/, $_);
-#    
-#  }
-
-
-
+##
+## need a way to track flags
+##
 my(@flags) = qw(an at cc gs mo oh si sp ss wb we wo wp yp);
 my(%flags);
 for(my $i = 0; $i < $#flags; $i++)
@@ -220,8 +228,14 @@ foreach my $day (@days)
 
 	$row[3] = capitalize_title($row[3]);
 
+##
+## Populate @rows
+##
 	push @rows, [@row];
 
+##
+## PostgreSQL update
+##
 	$querysth->execute($day, $row[0], $row[1], $row[2], $row[3], $row[4], $row[5]);
 	my($id) = $querysth->fetchrow_array();
 #	print $id, "\n";
@@ -247,6 +261,13 @@ foreach my $day (@days)
 	$meeting{NoteDisp} = $row[5];
 	$meeting{DayOfWeek} = $day;
 
+	my $meetinguuid = $::UUID->to_string($::UUID->create());
+
+	$::JsonOut{$meetinguuid} = \%meeting;
+
+#	my $o = $bucket->new_object($meetinguuid, \%meeting);
+#	$o->store();
+
 	##
 	## mongodbi code
 	##
@@ -258,7 +279,8 @@ foreach my $day (@days)
 					notedisp => $row[5],
 					dayofweek => $day);
 	$meetingdoc->insert;
-					
+
+	## validation
 	unless ($::ValidDivisions{$row[0]}) {
 	  die "Unknown division $row[0] (known divisions " . join(" ", keys %::ValidDivisions) . ")";
 	}
@@ -339,8 +361,9 @@ foreach my $day (@days)
     }
   }
 
-print STDERR "here\n";
-print encode_json(\@::Meetings);
+#print STDERR "here\n";
+print encode_json(\%::JsonOut);
+#print encode_json(\@::Meetings);
 
 exit;
 my(@fields);

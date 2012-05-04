@@ -15,6 +15,8 @@ sub new {
 
 sub latitude { shift->{INTPTLAT} }
 sub longitude { shift->{INTPTLONG} }
+
+sub as_string { shift->{GEOID} }
  
 1;
 
