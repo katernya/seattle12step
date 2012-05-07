@@ -37,7 +37,7 @@ else
     $client = Net::Riak->new(host => '127.0.0.1',
 				port => '8098');
   }
-    
+print STDERR "riak client = $client\n";
 die unless $client;
 
 my $bucket = $client->bucket('meetings');
@@ -139,6 +139,7 @@ unless($::TextOutputFileHandle)
 }
 
 my $dbh = DBI->connect("dbi:Pg:dbname=staging", "kay", "lizard");
+my $usepgsql = 1 if $dbh;
 
 ##
 ## need a way to track flags
@@ -157,9 +158,9 @@ my(@days) = qw(sunday monday tuesday wednesday thursday friday saturday);
 my $webprefix = "http://seattleaa.org/directory/web";
 my $ua = new LWP::UserAgent();
 
-my $querysth = $dbh->prepare("select meetingserialid from meetingsource where dayofweek = ? and divisions = ? and time = ? and openclosed = ? and name = ? and address = ? and notedisp = ?");
+my $querysth = $dbh->prepare("select meetingserialid from meetingsource where dayofweek = ? and divisions = ? and time = ? and openclosed = ? and name = ? and address = ? and notedisp = ?") if $usepgsql;
 
-my $sth = $dbh->prepare('INSERT INTO meetingsource (importrunuuid, importhost, sourceurl, updateddate, dayofweek, rownum, divisions, time, openclosed, name, address, notedisp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+my $sth = $dbh->prepare('INSERT INTO meetingsource (importrunuuid, importhost, sourceurl, updateddate, dayofweek, rownum, divisions, time, openclosed, name, address, notedisp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)') if $usepgsql;
 
 my(%input);
 foreach my $day (@days)
@@ -236,12 +237,15 @@ foreach my $day (@days)
 ##
 ## PostgreSQL update
 ##
-	$querysth->execute($day, $row[0], $row[1], $row[2], $row[3], $row[4], $row[5]);
-	my($id) = $querysth->fetchrow_array();
+	if($usepgsql)
+	{
+	    $querysth->execute($day, $row[0], $row[1], $row[2], $row[3], $row[4], $row[5]);
+	    my($id) = $querysth->fetchrow_array();
 #	print $id, "\n";
 
-	## execute our prepared query with our data argumenta
-	$sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $updateddate, $day, $mi, @row) unless $id;
+	    ## execute our prepared query with our data argumenta
+	    $sth->execute($::RunUUID, $ENV{HOSTNAME}, $url, $updateddate, $day, $mi, @row) unless $id;
+	}
 
 	## what follows is our custom parsing code
 
@@ -265,8 +269,11 @@ foreach my $day (@days)
 
 	$::JsonOut{$meetinguuid} = \%meeting;
 
-#	my $o = $bucket->new_object($meetinguuid, \%meeting);
-#	$o->store();
+##
+## store object in riak
+##
+	my $o = $bucket->new_object($meetinguuid, \%meeting);
+	$o->store();
 
 	##
 	## mongodbi code
